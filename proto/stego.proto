@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+// ============================================
+// Stego-Guard: контракт между Go-гейтвеем и ML-сервисом
+// ЕДИНСТВЕННЫЙ ИСТОЧНИК ПРАВДЫ: менять API можно только здесь,
+// после чего регенерируется код для Python и Go.
+// ============================================
+
+package stego.v1;
+
+option go_package = "github.com/lgr1dthebe4t22/stego-guard/api-gateway/proto-gen;stegov1";
+
+// ============================================
+// Перечисления
+// ============================================
+
+// Статус операции внедрения метки
+enum EmbedStatus {
+  EMBED_STATUS_UNSPECIFIED = 0;        // не задан (значение по умолчанию, proto3)
+  EMBED_OK = 1;                        // метка успешно внедрена
+  EMBED_ERROR_INVALID_IMAGE = 2;       // файл не является корректным изображением
+  EMBED_ERROR_PAYLOAD_TOO_LARGE = 3;   // payload не влезает в ёмкость изображения
+  EMBED_ERROR_INTERNAL = 4;            // внутренняя ошибка ML-сервиса
+}
+
+// Вердикт подлинности документа
+enum AuthenticityStatus {
+  AUTHENTICITY_UNSPECIFIED = 0;        // не задан
+  AUTHENTIC = 1;                       // подлинный: метка извлечена, хэш совпал
+  TAMPERED = 2;                        // вмешательство: метка извлечена, но хэш не совпал
+  NO_WATERMARK = 3;                    // метка не обнаружена (документ не защищён системой)
+  VERIFY_ERROR_INTERNAL = 4;           // внутренняя ошибка ML-сервиса
+}
+
+// ============================================
+// Сообщения
+// ============================================
+
+// Полезная нагрузка метки — то, что внедряется в частотную область изображения
+message Payload {
+  bytes content_hash = 1;              // SHA-256 оригинального документа (32 байта)
+  string user_id = 2;                  // ID пользователя/участка, защитившего документ
+  uint32 schema_version = 3;           // версия формата payload (для миграций)
+}
+
+// Запрос на внедрение метки (Mode 1: Embedding)
+message EmbedRequest {
+  bytes image = 1;                     // сырые байты исходного изображения (PNG/JPEG)
+  Payload payload = 2;                 // что внедряем
+  string output_format = 3;            // "png" или "jpeg" — формат защищённого файла
+}
+
+// Ответ на внедрение метки
+message EmbedResponse {
+  bytes watermarked_image = 1;         // сырые байты защищённого изображения
+  EmbedStatus status = 2;              // результат операции
+  string message = 3;                  // человекочитаемое пояснение (для логов)
+}
+
+// Запрос на проверку документа (Mode 2: Verification)
+message VerifyRequest {
+  bytes image = 1;                     // сырые байта проверяемого файла
+}
+
+// Ответ на проверку документа
+message VerifyResponse {
+  AuthenticityStatus status = 1;       // вердикт подлинности
+  double ber = 2;                      // Bit Error Rate: доля ошибочных битов метки (0.0–1.0)
+  bool hash_match = 3;                 // совпал ли извлечённый хэш с хэшем файла
+  bytes extracted_hash = 4;            // хэш, реально извлечённый из метки
+  string extracted_user_id = 5;        // ID защитившего, извлечённый из метки
+  bytes heatmap = 6;                   // PNG тепловой карты (пусто, если не нужна)
+  string message = 7;                  // пояснение к вердикту
+}
+
+// ============================================
+// Сервисы
+// ============================================
+
+service StegoService {
+  // Mode 1: внедрить метку в документ
+  rpc EmbedWatermark(EmbedRequest) returns (EmbedResponse);
+  // Mode 2: проверить документ и построить heatmap
+  rpc VerifyDocument(VerifyRequest) returns (VerifyResponse);
+}    // хэш, реально извлечён
