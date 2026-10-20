@@ -36,3 +36,5 @@ protected.png
 forged.png
 heatmap.png
 verify_result.json
+server.txt
+ml-service/data/samples/*
