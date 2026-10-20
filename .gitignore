@@ -40,3 +40,4 @@ server.txt
 ml-service/data/samples/*
 deployments/protected2.png
 protected*.png
+ml-service/data/
