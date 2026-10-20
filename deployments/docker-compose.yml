@@ -1,0 +1,37 @@
+# Stego-Guard: полный подъём трёх сервисов одной командой.
+# docker compose up --build
+services:
+  ml-service:
+    build: ../ml-service
+    restart: unless-stopped
+    # порт 50051 наружу НЕ публикуем — только внутри сети (архитектурный принцип)
+    networks:
+      - stego-net
+
+  api-gateway:
+    build: ../api-gateway
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      ML_SERVICE_ADDR: ml-service:50051   # имя сервиса = DNS-имя в сети compose
+      MAX_UPLOAD_MB: "25"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - ml-service
+    networks:
+      - stego-net
+
+  frontend:
+    build: ../frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - stego-net
+
+networks:
+  stego-net:
+    driver: bridge

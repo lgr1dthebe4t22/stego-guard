@@ -38,3 +38,5 @@ heatmap.png
 verify_result.json
 server.txt
 ml-service/data/samples/*
+deployments/protected2.png
+protected*.png

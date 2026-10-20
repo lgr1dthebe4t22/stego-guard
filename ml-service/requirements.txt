@@ -1,0 +1,8 @@
+# PyTorch ставится отдельно в Dockerfile (CPU-версия ~200 МБ вместо CUDA-версии ~2 ГБ)
+pywavelets
+opencv-python
+numpy
+grpcio
+grpcio-tools
+protobuf
+pytest

@@ -25,7 +25,7 @@ import stego_pb2          # noqa: E402
 import stego_pb2_grpc     # noqa: E402
 
 from app.config import (GRPC_PORT, GRPC_MAX_WORKERS, MAX_IMAGE_BYTES,  # noqa: E402
-                        BER_THRESHOLD, CODE_CELL_TOLERANCE)
+                        BER_THRESHOLD, HEADER_BER_THRESHOLD, CODE_CELL_TOLERANCE)
 from app.dwt.transform import embed, extract, content_digest, CapacityError  # noqa: E402
 from app.dwt.payload import (  # noqa: E402
     pack_payload, unpack_payload, bytes_to_bits, bits_to_bytes,
@@ -66,6 +66,15 @@ class StegoServicer(stego_pb2_grpc.StegoServiceServicer):
     def EmbedWatermark(self, request, context):
         try:
             image = _decode_image(request.image)
+
+            # защита от повторного внедрения: если преамбула на месте — файл уже защищён
+            bits_a, _, _ = extract(image, PAYLOAD_BITS)
+            if bit_error_rate(bits_a[:len(HEADER_BITS)], HEADER_BITS) <= HEADER_BER_THRESHOLD:
+                return stego_pb2.EmbedResponse(
+                    status=stego_pb2.EMBED_ERROR_INVALID_IMAGE,
+                    message="файл уже содержит метку Stego-Guard — перезащита запрещена",
+                )
+
             code = content_digest(image)                    # 16 байт
             digest_field = code.ljust(32, b"\x00")          # поле контракта 32 байта
             bits = bytes_to_bits(pack_payload(digest_field, request.payload.user_id))
