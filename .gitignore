@@ -30,3 +30,9 @@ deployments/.env
 # Данные
 ml-service/data/train/*
 ml-service/data/val/*
+# Тестовые артефакты
+test_document.png
+protected.png
+forged.png
+heatmap.png
+verify_result.json
