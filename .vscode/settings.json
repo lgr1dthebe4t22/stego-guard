@@ -1,0 +1,5 @@
+{
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/ml-service/app/proto_gen"
+  ]
+}

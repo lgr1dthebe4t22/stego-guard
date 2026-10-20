@@ -1,0 +1,32 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ML-модели (большие файлы)
+ml-service/models/*.pth
+ml-service/models/*.pt
+
+# Загрузки
+api-gateway/uploads/*
+!api-gateway/uploads/.gitkeep
+
+# Node
+node_modules/
+frontend/dist/
+
+# Go
+api-gateway/gateway.exe
+api-gateway/*.exe
+
+# Среда
+.env
+deployments/.env
+
+# IDE
+.idea/
+
+# Данные
+ml-service/data/train/*
+ml-service/data/val/*
