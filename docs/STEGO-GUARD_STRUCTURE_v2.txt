@@ -1,0 +1,120 @@
+STEGO-GUARD — СТРУКТУРА РЕПОЗИТОРИЯ (актуальная, синхронизирована с кодом)
+=============================================================================
+
+stego-guard/
+│
+├── docs/
+│   ├── ARCHITECTURE.md            # Архитектура v2.0 (синхронизирована с кодом)
+│   ├── PROTOCOL.md                # Описание gRPC/REST контрактов (заполнить)
+│   └── MODELS.md                  # Описание ML-моделей и метрик (заполнить в Фазе 2)
+│
+├── proto/
+│   └── stego.proto                # Контракт stego.v1 (единый источник правды)
+│
+├── ml-service/                    # 🧠 Python ML Engine (DWT + PyTorch)
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── config.py              # Порты, DELTA=20, REDUNDANCY=5, пороги BER/преамбулы/кода
+│   │   ├── server.py              # gRPC-сервер: EmbedWatermark (блок перезащиты), VerifyDocument
+│   │   │
+│   │   ├── proto_gen/             # Сгенерированный код (stego_pb2.py, stego_pb2_grpc.py)
+│   │   │
+│   │   ├── encoder/               # Нейросетевой кодек (ФАЗА 2 — сейчас заглушки-пакеты)
+│   │   │   ├── __init__.py
+│   │   │   ├── model.py           # Encoder/Decoder (PyTorch) — Шаг 9
+│   │   │   ├── layers.py          # Кастомные слои — Шаг 9
+│   │   │   └── train.py           # Совместное обучение — Шаг 9
+│   │   │
+│   │   ├── dwt/
+│   │   │   ├── __init__.py
+│   │   │   ├── transform.py       # DWT embed/extract + content_digest (8x8 LL-код)
+│   │   │   ├── payload.py         # Упаковка 71-байт payload (преамбула+код+ID+CRC)
+│   │   │   └── attacks.py         # Симулятор атак — Шаг 8 (расширить)
+│   │   │
+│   │   └── verification/
+│   │       ├── __init__.py
+│   │       ├── ber.py             # Bit Error Rate двух копий
+│   │       ├── heatmap.py         # Тепловая карта расхождений
+│   │       └── authenticity.py    # Дерево вердиктов (преамбула → AUTHENTIC/TAMPERED/NO_WATERMARK)
+│   │
+│   ├── models/                    # Веса нейросети (.pth) — в .gitignore, Шаг 9
+│   │   └── .gitkeep
+│   │
+│   ├── data/
+│   │   ├── train/                 # Датасет обучения — Шаг 8
+│   │   ├── val/                   # Валидация — Шаг 8
+│   │   └── samples/               # e2e-артефакты (в .gitignore)
+│   │
+│   ├── tests/                     # 11 pytest-тестов + атаки (зелёные)
+│   │   ├── __init__.py
+│   │   ├── test_roundtrip.py
+│   │   ├── test_ber.py
+│   │   └── test_attacks.py
+│   │
+│   ├── scripts/
+│   │   ├── e2e_check.py           # Сквозной тест через HTTP (5/5)
+│   │   ├── train.py               # Полный цикл обучения — Шаг 9
+│   │   ├── evaluate.py            # Оценка стойкости — Шаг 10
+│   │   └── generate_proto.sh      # Регенерация proto_gen
+│   │
+│   ├── requirements.txt           # без torch (ставится в Dockerfile CPU-индексом)
+│   ├── Dockerfile                 # python:3.13-slim + libgl1 + libglib2.0-0
+│   └── .dockerignore
+│
+├── api-gateway/                   # ⚡ Go Backend (Fiber + gRPC)
+│   ├── cmd/gateway/main.go        # Точка входа, graceful shutdown
+│   ├── internal/
+│   │   ├── config/config.go       # PORT, ML_SERVICE_ADDR, MAX_UPLOAD_MB из env
+│   │   ├── handler/               # embed.go, verify.go, health.go (Deps: Config+ML+Auditor)
+│   │   ├── grpcclient/client.go   # Dial с таймаутами, Embed/Verify
+│   │   ├── validation/file.go     # Магические байты PNG/JPEG, лимиты
+│   │   ├── hashing/sha256.go      # SHA-256 (аудит, заголовки)
+│   │   ├── store/document.go      # Слой данных (package store, ФАЗА 4: PostgreSQL)
+│   │   └── audit/audit.go         # JSON-аудит в stdout
+│   ├── proto-gen/                 # Сгенерированный Go-код (stego.pb.go, stego_grpc.pb.go)
+│   ├── test/validation_test.go
+│   ├── go.mod / go.sum            # module github.com/lgr1dthebe4t22/stego-guard/api-gateway
+│   ├── Dockerfile                 # golang:1.27-bookworm мультистейдж, CGO_ENABLED=0
+│   └── .dockerignore
+│
+├── frontend/                      # 🖥 React 18 + TS + Mantine v7 + Vite
+│   ├── public/favicon.svg
+│   ├── src/
+│   │   ├── main.tsx               # MantineProvider (тёмная тема)
+│   │   ├── App.tsx                # ГЛАВНЫЙ ЭКРАН (режимы, загрузка, результаты — вместо HomePage)
+│   │   ├── api/client.ts          # fetch → гейтвей (/api проксирует Vite/nginx)
+│   │   ├── types/api.ts           # VerifyResponse, EmbedResult, Mode
+│   │   └── components/
+│   │       ├── UploadZone.tsx     # Dropzone drag&drop
+│   │       ├── ResultCard.tsx     # Вердикты, BER, heatmap, скачивание
+│   │       └── HashDisplay.tsx    # SHA-256 + копирование
+│   │       (ModeSwitch/HomePage не существуют — роль в App.tsx; HeatmapViewer — в ResultCard)
+│   ├── index.html
+│   ├── package.json / package-lock.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts             # dev: порт 5173, proxy /api → :8080
+│   ├── nginx.conf                 # SPA + прокси /api → api-gateway:8080 (в контейнере)
+│   ├── Dockerfile                 # node build → nginx:alpine
+│   └── .dockerignore
+│
+├── deployments/
+│   ├── docker-compose.yml         # 3 сервиса, сеть stego-net, ML без публикации порта
+│   └── .env.example
+│
+├── scripts/
+│   ├── gen_proto.sh               # Регенерация proto обеих сторон
+│   └── setup_dev.sh               # Заглушка развёртывания окружения
+│
+├── .gitignore                     # venv, node_modules, models, *.pth, тестовые png, samples
+├── .gitattributes
+├── README.md
+└── LICENSE
+
+УПРАВЛЕНИЕ:
+  Подъём:      cd deployments && docker compose up -d
+  Остановка:   docker compose down
+  Пересборка:  docker compose up -d --build [<service>]
+  Логи:        docker compose logs <service>
+  E2E:         cd ml-service && python scripts/e2e_check.py   (требует запущенных сервисов)
+  Тесты:       cd ml-service && python -m pytest tests/ -v
+  Go-тесты:    cd api-gateway && go test ./test/
