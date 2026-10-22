@@ -1,5 +1,5 @@
 // Карточка результата: вердикт проверки ИЛИ результат защиты.
-import { Alert, Anchor, Button, Group, Paper, Stack, Text } from '@mantine/core';
+import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core';
 import type { EmbedResult, VerifyResponse } from '../types/api';
 import HashDisplay from './HashDisplay';
 
@@ -16,20 +16,31 @@ const STATUS_STYLE: Record<string, { color: string; emoji: string; label: string
 export default function ResultCard(props: Props) {
   if (props.kind === 'embed') {
     const { result, fileName } = props;
-    const url = URL.createObjectURL(result.blob);
+
+    // скачивание программное: никакой <a>, никакого перетаскивания браузером
+    const download = () => {
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `protected_${fileName}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
 
     return (
       <Paper withBorder p="md" radius="md">
         <Stack gap="sm">
           <Alert color="green" title="Документ защищён" icon="🔒">
-            Метка внедрена (SHA-256 содержимого + ID). Скачайте защищённую копию.
+            Метка внедрена (код содержимого + ID). Скачайте защищённую копию.
           </Alert>
           <HashDisplay hash={result.sha256} />
           <Text size="sm" c="dimmed">Защитил: {result.userId}</Text>
           <Group>
-            <Anchor href={url} download={`protected_${fileName}`}>
-              <Button leftSection="⬇">Скачать защищённый файл</Button>
-            </Anchor>
+            <Button onClick={download} leftSection="⬇">
+              Скачать защищённый файл
+            </Button>
           </Group>
         </Stack>
       </Paper>
@@ -49,10 +60,10 @@ export default function ResultCard(props: Props) {
       <Stack gap="sm">
         <Alert color={style.color} title={`${style.emoji} ${style.label}`}>
           {result.status === 'AUTHENTIC' && (
-            <>BER = 0 — метка цела, хэш совпал{result.user_id ? ` (защитил: ${result.user_id})` : ''}.</>
+            <>BER = 0 — метка цела, код содержимого совпал{result.user_id ? ` (защитил: ${result.user_id})` : ''}.</>
           )}
           {result.status === 'TAMPERED' && (
-            <>BER = {result.ber.toFixed(4)} — копии метки разошлись, хэш содержимого не совпал.</>
+            <>BER = {result.ber.toFixed(4)} — копии метки разошлись, содержимое изменено.</>
           )}
         </Alert>
         <HashDisplay hash={result.sha256} />
