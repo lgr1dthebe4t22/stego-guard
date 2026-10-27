@@ -1,16 +1,12 @@
-"""gRPC-сервер ML Engine Stego-Guard.
+"""gRPC-сервер ML Engine Stego-Guard v2.0.
 
 Реализует контракт stego.v1.StegoService:
-  EmbedWatermark — внедряет метку (код содержимого + ID пользователя)
-  VerifyDocument — извлекает метку, сверяет код и преамбулу, строит heatmap
-
-Код содержимого считает сам сервер — клиентский content_hash игнорируем.
-Сверка пороговая (расстояние Хэмминга по ячейкам): точное равенство
-невозможно из-за шума округления, криптографическая привязка появится
-в Фазе 2 (реестр в БД).
+  EmbedWatermark — внедряет DWT-метку
+  VerifyDocument — извлекает метку + нейросетевой анализ подлинности
 """
 
 import logging
+import os
 import sys
 from concurrent import futures
 from pathlib import Path
@@ -18,6 +14,7 @@ from pathlib import Path
 import cv2
 import grpc
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent / "proto_gen"))
 
@@ -34,6 +31,58 @@ from app.dwt.payload import (  # noqa: E402
 from app.verification.ber import bit_error_rate  # noqa: E402
 from app.verification.heatmap import build_heatmap  # noqa: E402
 from app.verification.authenticity import decide_verdict  # noqa: E402
+
+# Lazy neural verifier
+_verifier = None
+_verifier_device = None
+
+
+def _get_verifier():
+    """Lazy-load neural DocumentVerifier."""
+    global _verifier, _verifier_device
+    if _verifier is None:
+        try:
+            from app.neural.model import DocumentVerifier
+            _verifier_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            _verifier = DocumentVerifier().to(_verifier_device)
+            model_path = os.environ.get("VERIFIER_MODEL", "models/verification_best.pth")
+            if os.path.exists(model_path):
+                ckpt = torch.load(model_path, map_location=_verifier_device)
+                _verifier.load_state_dict(ckpt["model"])
+                _verifier.eval()
+                log.info("Neural verifier loaded from %s", model_path)
+            else:
+                log.warning("Neural model not found at %s, running without it", model_path)
+        except Exception as e:
+            log.warning("Neural verifier init failed: %s", e)
+            _verifier = "disabled"
+    return _verifier if _verifier != "disabled" else None
+
+
+def _neural_score(image: np.ndarray) -> float:
+    """0.0 = original, 1.0 = forged. Returns 0.0 if verifier unavailable."""
+    verifier = _get_verifier()
+    if verifier is None:
+        return 0.0
+
+    # Convert to RGB 512x512
+    if len(image.shape) == 2:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif image.shape[2] == 4:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+    elif image.shape[2] == 3:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    else:
+        return 0.0
+
+    img_rgb = cv2.resize(img_rgb, (512, 512))
+    tensor = torch.from_numpy(img_rgb.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
+    tensor = tensor.to(_verifier_device)
+
+    with torch.no_grad():
+        score = torch.sigmoid(verifier(tensor)).item()
+    return score
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("stego-ml")
@@ -61,13 +110,13 @@ def _code_distance(code_a: bytes, code_b: bytes) -> int:
 
 
 class StegoServicer(stego_pb2_grpc.StegoServiceServicer):
-    """Обработчики RPC. Ошибки превращаются в статусы контракта, не вылетают."""
+    """Обработчики RPC."""
 
     def EmbedWatermark(self, request, context):
         try:
             image = _decode_image(request.image)
 
-            # защита от повторного внедрения: если преамбула на месте — файл уже защищён
+            # защита от повторного внедрения
             bits_a, _, _ = extract(image, PAYLOAD_BITS)
             if bit_error_rate(bits_a[:len(HEADER_BITS)], HEADER_BITS) <= HEADER_BER_THRESHOLD:
                 return stego_pb2.EmbedResponse(
@@ -75,8 +124,8 @@ class StegoServicer(stego_pb2_grpc.StegoServiceServicer):
                     message="файл уже содержит метку Stego-Guard — перезащита запрещена",
                 )
 
-            code = content_digest(image)                    # 16 байт
-            digest_field = code.ljust(32, b"\x00")          # поле контракта 32 байта
+            code = content_digest(image)
+            digest_field = code.ljust(32, b"\x00")
             bits = bytes_to_bits(pack_payload(digest_field, request.payload.user_id))
             marked = embed(image, bits)
 
@@ -110,6 +159,7 @@ class StegoServicer(stego_pb2_grpc.StegoServiceServicer):
             image = _decode_image(request.image)
             actual_code = content_digest(image)
 
+            # DWT extraction
             bits_a, bits_b, meta = extract(image, PAYLOAD_BITS)
             payload_ber = bit_error_rate(bits_a, bits_b)
             header_ber = bit_error_rate(bits_a[:len(HEADER_BITS)], HEADER_BITS)
@@ -126,14 +176,42 @@ class StegoServicer(stego_pb2_grpc.StegoServiceServicer):
                 hash_match = distance <= CODE_CELL_TOLERANCE
             else:
                 distance, hash_match = 999, False
-            verdict = decide_verdict(header_ber, payload_ok, hash_match)
+
+            # Neural check
+            neural_score = _neural_score(image)  # 0.0 = original, 1.0 = forged
+
+            # Combined verdict
+            dwt_verdict = decide_verdict(header_ber, payload_ok, hash_match)
+
+            if dwt_verdict == stego_pb2.AUTHENTIC:
+                if neural_score >= 0.7:
+                    verdict = stego_pb2.TAMPERED
+                    message = "DWT-метка совпала, но нейросеть обнаружила подделку"
+                else:
+                    verdict = stego_pb2.AUTHENTIC
+                    message = "Документ подлинный (DWT + нейросеть)"
+            elif dwt_verdict == stego_pb2.TAMPERED:
+                if neural_score >= 0.7:
+                    verdict = stego_pb2.TAMPERED
+                    message = "Подделка подтверждена DWT и нейросетью"
+                else:
+                    verdict = stego_pb2.TAMPERED
+                    message = "DWT-метка повреждена (возможна подделка)"
+            else:  # NO_WATERMARK
+                if neural_score >= 0.7:
+                    verdict = stego_pb2.TAMPERED
+                    message = "Метка отсутствует, нейросеть обнаружила подделку"
+                else:
+                    verdict = stego_pb2.NO_WATERMARK
+                    message = "Метка не найдена, документ не защищён"
 
             heatmap = (build_heatmap(image, bits_a, bits_b, meta)
-                       if verdict == stego_pb2.TAMPERED else b"")
+                       if dwt_verdict == stego_pb2.TAMPERED else b"")
 
-            log.info("VerifyDocument: вердикт=%s BER=%.4f преамбула=%.3f ячеек=%d",
+            log.info("VerifyDocument: вердикт=%s BER=%.4f neural=%.3f ячеек=%d",
                      stego_pb2.AuthenticityStatus.Name(verdict),
-                     payload_ber, header_ber, distance)
+                     payload_ber, neural_score, distance)
+
             return stego_pb2.VerifyResponse(
                 status=verdict,
                 ber=payload_ber,
@@ -141,7 +219,7 @@ class StegoServicer(stego_pb2_grpc.StegoServiceServicer):
                 extracted_hash=parsed["content_hash"] if parsed else b"",
                 extracted_user_id=parsed["user_id"] if parsed else "",
                 heatmap=heatmap,
-                message=f"BER={payload_ber:.4f}, порог={BER_THRESHOLD}",
+                message=message,
             )
         except Exception as e:  # noqa: BLE001
             log.exception("VerifyDocument failed")
