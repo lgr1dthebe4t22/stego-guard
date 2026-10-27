@@ -4,7 +4,8 @@ services:
   ml-service:
     build: ../ml-service
     restart: unless-stopped
-    # порт 50051 наружу НЕ публикуем — только внутри сети (архитектурный принцип)
+    volumes:
+      - ../ml-service/models:/app/models
     networks:
       - stego-net
 

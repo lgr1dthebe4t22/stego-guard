@@ -184,20 +184,14 @@ class StegoServicer(stego_pb2_grpc.StegoServiceServicer):
             dwt_verdict = decide_verdict(header_ber, payload_ok, hash_match)
 
             if dwt_verdict == stego_pb2.AUTHENTIC:
-                if neural_score >= 0.7:
-                    verdict = stego_pb2.TAMPERED
-                    message = "DWT-метка совпала, но нейросеть обнаружила подделку"
-                else:
-                    verdict = stego_pb2.AUTHENTIC
-                    message = "Документ подлинный (DWT + нейросеть)"
+                # Для защищённых документов доверяем DWT
+                verdict = stego_pb2.AUTHENTIC
+                message = "Документ подлинный (DWT-метка подтверждена)"
             elif dwt_verdict == stego_pb2.TAMPERED:
-                if neural_score >= 0.7:
-                    verdict = stego_pb2.TAMPERED
-                    message = "Подделка подтверждена DWT и нейросетью"
-                else:
-                    verdict = stego_pb2.TAMPERED
-                    message = "DWT-метка повреждена (возможна подделка)"
+                verdict = stego_pb2.TAMPERED
+                message = "Подделка подтверждена DWT"
             else:  # NO_WATERMARK
+                # Нейросеть помогает только для незащищённых
                 if neural_score >= 0.7:
                     verdict = stego_pb2.TAMPERED
                     message = "Метка отсутствует, нейросеть обнаружила подделку"
